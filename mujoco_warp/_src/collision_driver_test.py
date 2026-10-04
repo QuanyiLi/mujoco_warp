@@ -441,7 +441,8 @@ class CollisionTest(parameterized.TestCase):
           </worldbody>
         </mujoco>
         """,
-    # bottom face 0.2 mm into the plane, a wider rim 0.3 mm above it: within 1 mm of the deepest vertex
+    # bottom face 0.2 mm into the plane, a wider rim 0.3 mm above it:
+    # within 1 mm of the deepest vertex
     "mesh_plane_rim_above_plane": """
         <mujoco>
           <asset>
@@ -812,6 +813,28 @@ class CollisionTest(parameterized.TestCase):
     )
     self.assertEqual(m.nxn_geom_pair.numpy().shape[0], 3)
     np.testing.assert_equal(m.nxn_pairid.numpy()[:][:, 0], np.array([-2, -1, -1]))
+
+  @parameterized.product(preceding_z=(-0.125, 0.125), clearance=(0.0, 2e-6, -2e-6))
+  def test_plane_mesh_unpopulated_support_index(self, preceding_z, clearance):
+    """An exact plane touch must not read the vertex before this mesh's segment."""
+    half = 0.03125
+    vertices = np.array([[x, y, z] for x in (-half, half) for y in (-half, half) for z in (-half, half)])
+    vertices = np.vstack(([0.0, 0.0, preceding_z], vertices))
+    height = np.float32(half + clearance)
+    convex = Geom()
+    convex.pos = wp.vec3(0.0, 0.0, height)
+    convex.rot = wp.mat33(np.eye(3))
+    convex.graphadr = -1
+    convex.vertnum = 8
+    convex.vertadr = 1
+    convex.vert = wp.array(vertices, dtype=wp.vec3)
+    dist = wp.empty(1, dtype=wp.vec4)
+    wp.launch(plane_convex_test, inputs=[convex], outputs=[dist], dim=1)
+    distances = dist.numpy()
+    self.assertTrue(np.isfinite(distances).all())
+    # Ten nanometres covers float32 rounding at 31.25 mm.
+    expected = max(0.0, half - float(height))
+    np.testing.assert_allclose(max(0.0, -float(distances.min())), expected, atol=1e-8, rtol=0)
 
   def test_plane_meshtet(self):
     # tetrahedron, separated in z by 0.1
