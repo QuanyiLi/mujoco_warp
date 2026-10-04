@@ -265,7 +265,7 @@ def plane_convex(plane_normal: wp.vec3, plane_pos: wp.vec3, convex: Geom) -> Tup
         count = count + 1
 
     # Check if the index is unique (appears exactly once)
-    if count == 1:
+    if idx >= 0 and count == 1:
       pos = convex.vert[convex.vertadr + idx]
       pos = convex.pos + convex.rot @ pos
       support = wp.dot(plane_pos_local - convex.vert[convex.vertadr + idx], n)
