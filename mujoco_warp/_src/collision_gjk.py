@@ -1554,17 +1554,21 @@ def _feature_dim(
   return dim, feature_index, feature_vert
 
 
-# find two normals that are facing each other within a tolerance, return 1 if found
+# find the two normals that are facing each other the most within a tolerance, return 1 if found
 @wp.func
 def _aligned_faces(vert1: wp.array[wp.vec3], len1: int, vert2: wp.array[wp.vec3], len2: int) -> Tuple[int, wp.vec2i]:
   res = wp.vec2i()
+  found = int(0)
+  best = float(-FACE_TOL)
   for i in range(len1):
     for j in range(len2):
-      if wp.dot(vert1[i], vert2[j]) < -FACE_TOL:
+      cos = wp.dot(vert1[i], vert2[j])
+      if cos < best:
+        best = cos
         res[0] = i
         res[1] = j
-        return 1, res
-  return 0, res
+        found = 1
+  return found, res
 
 
 # find two normals that are perpendicular to each other within a tolerance

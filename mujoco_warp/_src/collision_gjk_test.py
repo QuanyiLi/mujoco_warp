@@ -23,6 +23,7 @@ from mujoco_warp import GeomType
 from mujoco_warp import Model
 from mujoco_warp import test_data
 from mujoco_warp._src.collision_core import Geom
+from mujoco_warp._src.collision_gjk import _aligned_faces
 from mujoco_warp._src.collision_gjk import ccd
 from mujoco_warp._src.collision_gjk import multicontact
 from mujoco_warp._src.collision_gjk import support
@@ -580,6 +581,29 @@ class GJKTest(parameterized.TestCase):
 
     _, ncon, _, _ = _geom_dist(m, d, 0, 1, multiccd=True)
     self.assertEqual(ncon, 4)
+
+  def test_aligned_faces_best_pair(self):
+    """Test the aligned faces are the most opposed pair, not the first within tolerance."""
+
+    @wp.kernel(module="unique", enable_backward=False)
+    def _aligned_faces_kernel(
+      normal1: wp.array[wp.vec3],
+      normal2: wp.array[wp.vec3],
+      res_out: wp.array[int],
+    ):
+      found, res = _aligned_faces(normal1, normal1.shape[0], normal2, normal2.shape[0])
+      res_out[0] = found
+      res_out[1] = res[0]
+      res_out[2] = res[1]
+
+    # normal1[0] is 0.05 rad off, within FACE_TOL; normal1[1] opposes normal2 exactly
+    normal1 = wp.array([wp.vec3(np.sin(0.05), 0.0, np.cos(0.05)), wp.vec3(0.0, 0.0, 1.0)], dtype=wp.vec3)
+    normal2 = wp.array([wp.vec3(0.0, 0.0, -1.0)], dtype=wp.vec3)
+    res = wp.zeros(3, dtype=int)
+
+    wp.launch(_aligned_faces_kernel, dim=1, inputs=[normal1, normal2], outputs=[res])
+
+    np.testing.assert_array_equal(res.numpy(), [1, 1, 0])
 
   def test_box_box_early(self):
     """Test box-box with EPA early termination (first iteration) with upper < lower bound."""
