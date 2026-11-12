@@ -13,6 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
+import mujoco
 import numpy as np
 import warp as wp
 from absl.testing import absltest
@@ -738,6 +739,65 @@ class GJKTest(parameterized.TestCase):
 
     dist, _, _, _ = _geom_dist(m, d, 0, 1, pos2=pos, mat2=rot)
     self.assertAlmostEqual(dist, -0.0016624178339902445)
+
+  @parameterized.parameters(
+    # penetrating by 87 um: the loop stalled at an equal norm, 41 um apart, and EPA never ran
+    (
+      (2.0, 1.0),
+      (0.0, 0.0, 1.67),
+      (0.08093199, -0.19746259, 0.6419623),
+      (0.5566029, 0.27645272, 0.78343296, 0.7161529, 0.31831622, -0.62112796, -0.42109188, 0.9067794, -0.02080669),
+    ),
+    # 0.44 mm apart, read 23 um long
+    (
+      (2.0, 1.0),
+      (0.0, 0.0, 1.67),
+      (-0.35728547, 0.20539384, 0.6457987),
+      (-0.83034676, -0.19620405, 0.52156335, 0.557243, -0.29594162, 0.7758214, 0.0021329871, 0.9348383, 0.3550675),
+    ),
+    # 0.40 m apart, read 1.33 m
+    (
+      (0.12, 0.475),
+      (0.0, -0.7, 0.475),
+      (0.19118695, -0.18366519, 0.94568044),
+      (-0.7317117, 0.53409636, -0.42348436, -0.24965106, -0.78812116, -0.5626183, -0.6342494, -0.3059511, 0.7100152),
+    ),
+    # 0.37 m apart, read 0.22 mm short
+    (
+      (0.12, 0.475),
+      (0.0, -0.7, 0.475),
+      (0.4104944, -0.37667274, 0.49662867),
+      (-0.3891541, -0.9080225, -0.15509461, 0.8772526, -0.31394133, -0.3631376, 0.2810465, -0.2773736, 0.91873664),
+    ),
+  )
+  def test_cylinder_box_distance_float32(self, cylinder_size, cylinder_pos, box_pos, box_mat):
+    """Test cylinder-box distance against MuJoCo where float32 GJK stalls on the cylinder's rim."""
+    xml = f"""
+      <mujoco>
+        <option ccd_tolerance="{{tolerance}}" ccd_iterations="{{iterations}}"/>
+        <worldbody>
+          <geom type="cylinder" size="{cylinder_size[0]} {cylinder_size[1]}"/>
+          <geom type="box" size=".021 .021 .0115" pos="0 0 5"/>
+        </worldbody>
+      </mujoco>
+      """
+    _, _, m, d = test_data.fixture(xml=xml.format(tolerance=1e-6, iterations=50))
+
+    # the float32 poses the convex narrowphase hands GJK, geom1 shifted to the origin;
+    # MuJoCo at a converged tolerance
+    xpos = np.array([cylinder_pos, box_pos], dtype=np.float32)
+    xpos = xpos - xpos[0]
+    xmat = np.array([np.eye(3).ravel(), box_mat], dtype=np.float32)
+    mjm = mujoco.MjModel.from_xml_string(xml.format(tolerance=1e-12, iterations=1000))
+    mjd = mujoco.MjData(mjm)
+    mjd.geom_xpos[:] = xpos
+    mjd.geom_xmat[:] = xmat
+    expected = mujoco.mj_geomDistance(mjm, mjd, 0, 1, 10.0, None)
+
+    dist, _, _, _ = _geom_dist(
+      m, d, 0, 1, pos1=wp.vec3(xpos[0]), mat1=wp.mat33(xmat[0]), pos2=wp.vec3(xpos[1]), mat2=wp.mat33(xmat[1])
+    )
+    self.assertAlmostEqual(dist, expected, delta=1e-6)
 
   def test_cylinder_capsule(self):
     """Test cylinder and a capsule with CCD fallback."""

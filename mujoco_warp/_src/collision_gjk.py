@@ -631,8 +631,11 @@ def _gjk_support(
   dir_neg = x_k / x_norm
   x_dir = x_k
 
-  # tuning for discrete geoms when direction is noisy
-  if is_discrete and x_norm < 1e-4:
+  # tuning when direction is noisy: x_k is normal to its simplex's edge or face, but in float32
+  # its combination of the simplex points is off that normal by their rounding over x_norm; a
+  # continuous support (a cylinder's rim) takes any such error for a new support point, so a
+  # pair that is not discrete is tuned at every distance
+  if not is_discrete or x_norm < 1e-4:
     if n == 2:
       edge = simplex[1] - simplex[0]
       edge_norm2 = wp.dot(edge, edge)
@@ -689,10 +692,13 @@ def gjk(
   # set initial guess
   x_k = x1_0 - x2_0
   xnorm = wp.sqrt(wp.dot(x_k, x_k))
-  xnorm_prev = float(0.0)
+  support_prev = wp.vec3(FLOAT_MAX, FLOAT_MAX, FLOAT_MAX)
 
+  # in float32 a step can move x_k by less than its norm resolves while the gap is still wide
+  # (support points along a cylinder's rim, a mesh's vertices far from the origin), so an
+  # unchanged norm does not end the loop: the gap or a repeated support point below does
   for _ in range(gjk_iterations):
-    if xnorm < min_norm or wp.abs(xnorm_prev - xnorm) < MINVAL:
+    if xnorm < min_norm:
       break
 
     # compute the support point with direction tuning; the tests below read x_dir, x_k along the
@@ -711,8 +717,19 @@ def gjk(
 
     # stopping criteria using the Frank-Wolfe duality gap given by
     #  |f(x_k) - f(x_min)|^2 <= < grad f(x_k), (x_k - simplex[n]) >
-    if wp.dot(x_dir, x_dir - simplex[n]) < epsilon:
+    gap = wp.dot(x_dir, x_dir - simplex[n])
+    if gap < epsilon:
       break
+
+    # gap / xnorm bounds the distance's error; far from the origin float32 cannot bring the gap
+    # under epsilon
+    if gap < 0.1 * tolerance * xnorm:
+      break
+
+    # the same support point twice running: the loop has nothing to add
+    if simplex[n] == support_prev:
+      break
+    support_prev = simplex[n]
 
     # the lower bound on distance between the two geoms is (lower / x_norm)
     # if lower > 0, then the geoms are separated
@@ -740,6 +757,13 @@ def gjk(
     # of the closest point to the origin in the simplex
     lmbda = _subdistance(n + 1, simplex)
 
+    # in float32 a nearly degenerate simplex's cofactors do not sum to its determinant (support
+    # points microns apart on a cylinder's rim): scaled to sum to one, the coordinates give a point
+    # of the simplex, so of the Minkowski difference
+    lmbda_sum = lmbda[0] + lmbda[1] + lmbda[2] + lmbda[3]
+    if lmbda_sum > 0.0:
+      lmbda = lmbda / lmbda_sum
+
     # remove vertices from the simplex no longer needed
     n = int(0)
     for i in range(4):
@@ -760,7 +784,6 @@ def gjk(
 
     # get the next iteration of x_k
     x_k = _linear_combine(n, lmbda, simplex)
-    xnorm_prev = xnorm
     xnorm = wp.sqrt(wp.dot(x_k, x_k))
 
     # we have a tetrahedron containing the origin so return early
